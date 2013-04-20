@@ -13,22 +13,25 @@ PBL_APP_INFO(MY_UUID,
 //concentrate on the design elements needed for my cunning plans.
 
 Window window;
-Layer timeFrame;
-GRect from_rect[4];  //to restore digits properly.
-bool isDown[] = {true,true,true,true};
-bool minuteAnimating = false;
+Layer timeFrame; //this is necessary to frame the digits so that they can be animated with the property animation tool yet be clipped when they move down
+                    // outside of the watch frame.
 
-int count_down_to = -1;
+GRect from_rect[4];  //to restore digits to their starting positions properly.
 
-int _gearCounter = 1;
-AppTimerHandle timer_handle;
+bool isDown[] = {true,true,true,true}; //should start in "down" state, so they can animate up during load.
+bool minuteAnimating = false; //state of rapid animation of gears during the 3 second time animations.
+
+int count_down_to = -1; // hmm, this is used in handle_second_tick, to determine how many digits need to be animated.
+        // if I revise the code, I'll probably move it into that routine, I don't think it needs to be a global anymore.
+
+int _gearCounter = 1; //this determines what frame of the gear animation we're on. It probably needs an upper bounds check somewhere, since in theory it increases indefinitely.
+
+AppTimerHandle timer_handle; //to hold the animation timer for the gears updating 10 times per second.
 
 BmpContainer background_image;
 
-// BmpContainer meter_bar_image;
-
-// TODO: Handle 12/24 mode preference when it's exposed.
-//BmpContainer time_format_image;
+// BmpContainer meter_bar_image;    //from 91dub, currently not doing this.
+// BmpContainer time_format_image;  //from 91dub, currently not doing this.
 
 
 const int DAY_NAME_IMAGE_RESOURCE_IDS[] = {
@@ -77,7 +80,7 @@ const int BIG_DIGIT_IMAGE_RESOURCE_IDS[] = {
 
 #define TOTAL_TIME_DIGITS 4
 BmpContainer time_digits_images[TOTAL_TIME_DIGITS];
-PropertyAnimation digit_animations[TOTAL_TIME_DIGITS];
+PropertyAnimation digit_animations[TOTAL_TIME_DIGITS];  //4 animations, 1 per digit, since they update at different rates.
 
 const int GEAR_IMAGE_RESOURCE_IDS[] = {
   RESOURCE_ID_IMAGE_GEAR_0,
@@ -98,22 +101,31 @@ const int GEAR_IMAGE_RESOURCE_IDS[] = {
 };
 BmpContainer gear_image;
 
+//
+// Main image setting routine.
+// Used for every image swap in the app, the gears, the time digits, the day of week, the date
+//
 
 void set_container_image(BmpContainer *bmp_container, const int resource_id, GPoint origin, Layer *targetLayer) {
 
-  layer_remove_from_parent(&bmp_container->layer.layer);
-  bmp_deinit_container(bmp_container);
+  layer_remove_from_parent(&bmp_container->layer.layer);            //remove it from layer so it can be safely deinited
+  bmp_deinit_container(bmp_container);                              //deinit the old image.
 
-  bmp_init_container(resource_id, bmp_container);
+  bmp_init_container(resource_id, bmp_container);                   //init the container with the new image
 
-    GRect frame = layer_get_frame(&bmp_container->layer.layer);
+  GRect frame = layer_get_frame(&bmp_container->layer.layer);       //posiiton the new image with the supplied coordinates.
   frame.origin.x = origin.x;
   frame.origin.y = origin.y;
   layer_set_frame(&bmp_container->layer.layer, frame);
 
-  layer_add_child(targetLayer, &bmp_container->layer.layer);
+  layer_add_child(targetLayer, &bmp_container->layer.layer);        //add the new image to the target layer.
 }
 
+
+//
+// Get Display Hour.
+// turn the display hour into the digits we actually want to display.
+//
 
 unsigned short get_display_hour(unsigned short hour) {
 
@@ -128,6 +140,12 @@ unsigned short get_display_hour(unsigned short hour) {
 
 }
 
+//
+// Update Display
+// This, called at the beginning, then updated once a minute, changes the display elements into their new images.
+// Some weird provision needed to be made for the main clock digits, which have two different possible positions depending on
+// whether or not they are currently up or down. (inline conditions on the isDown[] boolean array are used to determine this.
+//
 
 void update_display(PblTm *current_time) {
   // TODO: Only update changed values?
@@ -164,6 +182,10 @@ void update_display(PblTm *current_time) {
 
 }
 
+//
+// Minute updates
+// Does very little. Called once a minute by handle_second_tick, calls update_display with the current time.
+//
 
 void handle_minute_tick(AppContextRef ctx, PebbleTickEvent *t) {
   (void)ctx;
@@ -171,99 +193,99 @@ void handle_minute_tick(AppContextRef ctx, PebbleTickEvent *t) {
   update_display(t->tick_time);
 }
 
+
+//
+// Handle timer
+// Animates the rapid motion of the gears. (when it's just one gear movement per second, that's handled in handle_second_tick)
+//
+
 #define COOKIE_MY_TIMER 1
 
 void handle_timer(AppContextRef ctx, AppTimerHandle handle, uint32_t cookie) {
     (void)ctx;
     (void)handle;
-    
-    //GRect myRect = GRect(20,20,40,40);
-    
+        
     if (cookie == COOKIE_MY_TIMER) {
+        //update the gear to the next frame of animation.
         _gearCounter++;
         set_container_image(&gear_image, GEAR_IMAGE_RESOURCE_IDS[_gearCounter%15], GPoint(9, 9), &window.layer);
     }
     
-    if(_gearCounter < 600 || minuteAnimating) {
+    if(_gearCounter < 300 || minuteAnimating) {
+        //if we're in the first 30 seconds, keep the animation moving fast OR
+        //if it's during the animation of the minute digits, keep the animation moving fast.
         timer_handle = app_timer_send_event(ctx, 100 /* milliseconds */, COOKIE_MY_TIMER);
-    } 
-    
-    //&time_digits_images[1]
-    //_gearCounter%100
-    //GRect hour_bounds = tl->layer.bounds;
-    
-    //layer_set_bounds(&time_digits_images[1].layer.layer, myRect);
-    
-    //= &time_digits_images[1].layer.layer.bounds; //layer_get_bounds(&time_digits_images[1].layer.layer);
-    //&time_digits_images[1].layer.layer.bounds.origin.y = _gearCounter%100;
-    
-    //time_digits_images[1].layer.layer.bounds.origin.y = _gearCounter%100; //this works!
-    
+    }
 }
 
-/*
-void anim_update(Animation whatAnim, const uint32_t normalized_t) {
-    
-}
-*/
+//
+// Handle Second Tick
+// The main update happens here. Called once a second.
+// 
 
 void handle_second_tick(AppContextRef ctx, PebbleTickEvent *t) {
     (void)ctx;
     
     unsigned short display_second = t->tick_time->tm_sec;
     
-    // set_container_image(&time_digits_images[0], BIG_DIGIT_IMAGE_RESOURCE_IDS[display_hour/10], GPoint(10, 84));
     //  bmp_init_container(RESOURCE_ID_IMAGE_METER_BAR, &meter_bar_image);
     
-    // meter_bar_image.layer.layer.frame.origin.x = 9+(display_second*2);
+    // meter_bar_image.layer.layer.frame.origin.x = 9+(display_second*2);  // move the meter bar as a second hand. 
     // layer_set_hidden(&(meter_bar_image.layer.layer),false);
     // layer_mark_dirty(&(meter_bar_image.layer.layer));
     
     //set_container_image(&meter_bar_image,RESOURCE_ID_IMAGE_METER_BAR,GPoint(77-display_second,43));
     
-    //_gearCounter++;
-    //set_container_image(&gear_image, GEAR_IMAGE_RESOURCE_IDS[_gearCounter%15], GPoint(9, 9));
     if(_gearCounter > 299 || !minuteAnimating) {
+        //if we're not doing a rapid gear animation, we should still update once per second.
+        //removing this would save some battery life, I imagine.
         _gearCounter++;
         set_container_image(&gear_image, GEAR_IMAGE_RESOURCE_IDS[_gearCounter%15], GPoint(9, 9), &window.layer);
     }
   
-    unsigned short display_hour = get_display_hour(t->tick_time->tm_hour);
-    
-    count_down_to = 3;
-    if (t->tick_time->tm_min%10 == 9)
-    {
-        count_down_to = 2;
-        if (t->tick_time->tm_min/10 == 5)
-        {
-            count_down_to = 1;
-            if (display_hour==9 || display_hour==19 || display_hour==23)
-            {
-                count_down_to = 0;
-            }
-            if (display_hour==12 && !clock_is_24h_style())
-            {
-                count_down_to = 0;
-            }
-        }
-    }
-        
     if(display_second==58)
     {
-        animation_unschedule_all();
-        //hide something!
+        unsigned short display_hour = get_display_hour(t->tick_time->tm_hour);
+        
+        //figure out how many digits will be updating in 2 seconds.
+        count_down_to = 3;
+        if (t->tick_time->tm_min%10 == 9)
+        {
+            count_down_to = 2;
+            if (t->tick_time->tm_min/10 == 5)
+            {
+                count_down_to = 1;
+                if (display_hour==9 || display_hour==19 || display_hour==23)
+                {
+                    count_down_to = 0;
+                }
+                if (display_hour==12 && !clock_is_24h_style())
+                {
+                    count_down_to = 0;
+                }
+            }
+        }
+        
+        //in 2 seconds, at least one digit will be changing. We animate all the digits that will be updating off of the bottom thier layer's frame.
+        animation_unschedule_all(); //just in case. This isn't likely to occur, but could happen if the app is launched near minute transition
         minuteAnimating= true; //spin the wheels while moving the digitis.
+  
         if (_gearCounter>299)
         {
+            //we're not doing the initial quick animation anymore, so we have to start our own.
             timer_handle = app_timer_send_event(ctx, 100 /* milliseconds */, COOKIE_MY_TIMER);
         }
+        
         for(int i=3;i>=count_down_to;i--)
         {
-            isDown[i] = true;
+            //for each digit that's going to be changing.
+            isDown[i] = true;  //mark it as down so that updateImage knows to redraw new digit outside the layer frame.
+            
             GRect to_rect = GRect(0, 0, 0, 0);
-            to_rect = from_rect[i]; //layer_get_frame(&time_digits_images[i].layer.layer);
-            //from_rect[i]=to_rect; //is now set at init
-            to_rect.origin.y += 50;
+            to_rect = from_rect[i]; //what's its base position?
+            to_rect.origin.y += 50; //we want to move it down 50 pixels, to get it outside the frame.
+            
+            //set up and start the animation.
             property_animation_init_layer_frame(&digit_animations[i], &time_digits_images[i].layer.layer, NULL, &to_rect);
             animation_set_duration(&digit_animations[i].animation, 1750-(250*i));
             animation_set_curve(&digit_animations[i].animation,AnimationCurveEaseIn);
@@ -273,13 +295,14 @@ void handle_second_tick(AppContextRef ctx, PebbleTickEvent *t) {
     }
     if(display_second==0) {
         
+        handle_minute_tick(ctx,t);  //we call this rather than having the OS do so, so we can control exactly when it's going to happen.
+        animation_unschedule_all(); //just in case. This isn't likely to occur, but could happen if the app is launched near minute transition.
         
-        handle_minute_tick(ctx,t);
-        animation_unschedule_all();
-        //bring them back!
+        //animate the digits back to starting positions!
         for(int i=3;i>=0;i--)
         {
             if(isDown[i]) {
+                //if we put it down, so set up and start the animation to get it back up.
                 property_animation_init_layer_frame(&digit_animations[i], &time_digits_images[i].layer.layer, NULL, &from_rect[i]);
                 animation_set_duration(&digit_animations[i].animation, 1250-(125*i));
                 animation_set_curve(&digit_animations[i].animation,AnimationCurveEaseIn);
@@ -289,10 +312,11 @@ void handle_second_tick(AppContextRef ctx, PebbleTickEvent *t) {
         }
     }
     if(display_second==1) {
+        //stop the gears spinning fast, and go back to 1 update per second.
         minuteAnimating = false;
     }
         
-}
+} //end handle_second_tick
 
 
 
@@ -338,6 +362,7 @@ void handle_init(AppContextRef ctx) {
     
   update_display(&tick_time);
 
+    //start by animating 3 or 4 digits up from the bottom of the display, slower than we do later on for dramatic effect.
     for(int i=3;i>=0;i--)
     {
         from_rect[i] = layer_get_frame(&time_digits_images[i].layer.layer);
@@ -351,14 +376,14 @@ void handle_init(AppContextRef ctx) {
     
     timer_handle = app_timer_send_event(ctx, 100 /* milliseconds */, COOKIE_MY_TIMER);
 
-}
+} //end handle_init
 
 
 void handle_deinit(AppContextRef ctx) {
   (void)ctx;
 
   bmp_deinit_container(&background_image);
-  // bmp_deinit_container(&meter_bar_image);
+  //bmp_deinit_container(&meter_bar_image);
   //bmp_deinit_container(&time_format_image);
   bmp_deinit_container(&day_name_image);
   bmp_deinit_container(&gear_image);
